@@ -1,29 +1,29 @@
-import sys
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import re
-import string
 from langdetect import detect
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.model_selection import train_test_split
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.models import Sequential
-from keras.layers import Embedding, Flatten, Dense, GlobalMaxPool1D
+from keras.layers import Embedding, Flatten, Dense, GlobalMaxPool1D, Conv1D, LSTM, SpatialDropout1D
+from keras.layers import Dropout, Bidirectional, BatchNormalization
+import nltk
+import emoji
 
 
-# Removing RT, Punctuation etc
 plt.style.use('ggplot')
 
 
-def remove_punc(df):
-
-   remove_rt = lambda x: re.sub("RT @\w+: ", " ", x)
-   rt = lambda x: re.sub("(@[A-Za-z0–9]+)|([⁰-9A-Za-z \t])|(\w+:\/\/\S+)", " ", x)
-   df["text"] = df.text.map(remove_rt).map(rt)
-   df["text"] = df.text.str.lower()
-   pass
+def cleaner(tweet):
+   tweet = re.sub("@[A-Za-z0-9]+", "", tweet)  # Remove @ sign
+   tweet = re.sub(r"(?:\@|http?\://|https?\://|www)\S+", "", tweet)  # Remove http links
+   tweet = " ".join(tweet.split())
+   tweet = ''.join(c for c in tweet if c not in emoji.UNICODE_EMOJI)  # Remove Emojis
+   tweet = tweet.replace("#", "").replace("_", " ")  # Remove hashtag sign but keep the text
+   tweet = " ".join(w for w in nltk.wordpunct_tokenize(tweet))
+   return tweet
 
 
 
@@ -61,11 +61,18 @@ def plot_history(history):
    plt.legend()
 
 
+def transform_sentence_to_sequence(sentence, tokenizer, maxlen):
+   texts = tokenizer.texts_to_sequences([sentence])
+   texts = pad_sequences(texts, padding='post', maxlen=maxlen)
+   return texts
+
+
 # 0 = negative, 2 = neutral, 4 = positive
 
 tweets = pd.read_csv('training_set_small.csv', names=['target', 'id', 'date', 'flag', 'user', 'text'])
 
 tweets['target'].replace({4: 1}, inplace=True)
+tweets['text'] = tweets['text'].map(lambda x: cleaner(x))
 text = tweets['text']
 target = tweets['target']
 
@@ -147,7 +154,8 @@ plot_history(history3)
 
 
 model4 = Sequential()
-model4.add(Embedding(vocab_size, embedding_dim_glove, weights=[embedding_matrix], input_length=maxlen, trainable=True))
+model4.add(Embedding(vocab_size, embedding_dim, input_length=maxlen))
+model4.add(Conv1D(128, 5, activation='relu'))
 model4.add(GlobalMaxPool1D())
 model4.add(Dense(10, activation='relu'))
 model4.add(Dense(1, activation='sigmoid'))
@@ -156,7 +164,7 @@ model4.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'
 model4.summary()
 
 
-history4 = model4.fit(X_train, target_train, epochs=25, validation_data=(X_test, target_test), batch_size=150)
+history4 = model4.fit(X_train, target_train, epochs=15, validation_data=(X_test, target_test), batch_size=150)
 loss4, accuracy4 = model4.evaluate(X_train, target_train, verbose=False)
 print("Training Accuracy: {:.4f}".format(accuracy4))
 loss4, accuracy4 = model4.evaluate(X_test, target_test, verbose=False)
@@ -164,3 +172,36 @@ print("Testing Accuracy:  {:.4f}".format(accuracy4))
 plot_history(history4)
 
 
+
+
+model5 = Sequential()
+model5.add(Embedding(vocab_size, embedding_dim, input_length=maxlen))
+model5.add(SpatialDropout1D(0.1))
+model5.add(Conv1D(128, 5, activation='relu'))
+model5.add(Bidirectional(LSTM(4, return_sequences=True)))
+model5.add(Conv1D(128, 5, activation='relu'))
+model5.add(GlobalMaxPool1D())
+model5.add(Dropout(0.25))
+model5.add(BatchNormalization())
+model5.add(Dense(10, activation='relu'))
+model5.add(Dense(1, activation='sigmoid'))
+model5.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+model5.summary()
+
+
+history5 = model5.fit(X_train, target_train, epochs=15, validation_data=(X_test, target_test), batch_size=150)
+
+
+loss5, accuracy5 = model5.evaluate(X_train, target_train, verbose=False)
+print("Training Accuracy: {:.4f}".format(accuracy5))
+loss5, accuracy5 = model5.evaluate(X_test, target_test, verbose=False)
+print("Testing Accuracy:  {:.4f}".format(accuracy5))
+plot_history(history5)
+
+
+
+
+to_pred = transform_sentence_to_sequence( "With joy, it's good weather", tokenizer, 60)
+model4.predict(to_pred)
+model5.predict(to_pred)
